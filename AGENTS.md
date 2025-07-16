@@ -57,6 +57,7 @@ cd memory-pair-exp
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python run_regret.py --dataset rotmnist --stream drift --algo memorypair --T 100000
+```
 
 Protocol for Data Ingestion
 
@@ -200,4 +201,4 @@ At the end of generation, execute a shell snippet in run-once mode:
 ```bash
 git add data_loader
 git commit -m "ADD:data_loader – unified loaders w/ fallback simulation"
-<img width="1192" height="7306" alt="image" src="https://github.com/user-attachments/assets/916ec91a-23f8-466f-9ef7-179988c7fdf1" />
+```
