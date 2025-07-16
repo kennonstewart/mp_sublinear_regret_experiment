@@ -1,0 +1,23 @@
+
+Regret Analysis Report
+======================
+
+Dataset: covtype_drift_memorypair
+Analysis Time: 2025-07-16 19:33:13
+
+Results:
+--------
+Growth Exponent: 0.9873
+Final Regret: 102.76
+Final T: 50
+Ratio to √T: 14.5324
+
+Assessment:
+-----------
+Sublinear Growth: Yes
+√T-like Growth: No
+
+Interpretation:
+---------------
+✓ The algorithm achieves sublinear regret (exponent < 1.0)
+✗ The growth rate differs from √T scaling
