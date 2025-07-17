@@ -1,6 +1,6 @@
 Prompt
 
-This is your general prompt. I later made a design decision to make the data loader its own submodule within the meta repository, and so the first prompt will be followed by a second that breaks down the process for importing the data for the experiments.
+You are currently within a submodule of a metarepository. This particular submodule is focused on taking the data from a data_loader submodule and performing the experiment as described below.
 
 Experiment Prompt (written prior to meta repository creation)
 
