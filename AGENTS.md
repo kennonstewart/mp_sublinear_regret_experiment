@@ -1,11 +1,13 @@
 Prompt
+You are working inside a submodule of a meta-repository that already contains
 
-You are currently within a submodule of a metarepository. This particular submodule is focused on taking the data from a data_loader submodule and performing the experiment as described below.
+  code/memory_pair/…           ← core algorithm
+  experiments/…                ← 3 experiment folders (to be filled)
+  experiments/mp_sublinear_regret_experiment                ← particular experiment folder you're in
+  
+You are currently within a submodule of a metarepository dedicated to machine unlearning research. This particular submodule is focused on taking the data from a data_loader submodule and performing the experiment as described below.
 
-Experiment Prompt (written prior to meta repository creation)
-
-Generate a reproducible GitHub repository called `memory-pair-exp`
-that answers the research question:
+Experiment Prompt
 
   “Does the Memory-Pair learner achieve sub-linear cumulative
    regret R_T = O(√T) on drifting and adversarial data streams?”
@@ -18,20 +20,12 @@ Repository spec
 
 Data & Streams
 --------------
-1. Rotating-MNIST: auto-download from
-   https://github.com/google-research/rotating-mnist
-2. COVTYPE (UCI Covertype): auto-download from
-   https://archive.ics.uci.edu/ml/machine-learning-databases/covtype/
-
-For each dataset create three streaming generators:
-  a. IID shuffle
-  b. Gradual drift (rotation angle +5° every 1000 steps | feature-mean
-     drift on COVTYPE)
-  c. Adversarial permute (random swap every 500 steps)
+1. Rotating-MNIST
+2. COVTYPE (UCI Covertype)
 
 Algorithms to implement
 -----------------------
-• MemoryPairOnlineLBFGS  (our method — single-pass L-BFGS, odometer
+• MemoryPairOnlineLBFGS  (our method — single-pass online L-BFGS, odometer
   disabled for now)
 • OnlineSGD
 • AdaGrad
@@ -61,8 +55,7 @@ python run_regret.py --dataset rotmnist --stream drift --algo memorypair --T 100
 
 Protocol for Data Ingestion
 
-Create/overwrite ONLY the folder  experiments/sublinear_regret  with:
-
+Create/overwrite:
   README.md
   requirements.txt          (torch>=2.2, numpy, pandas, matplotlib, click)
   run.py                    (CLI driver)
@@ -78,6 +71,144 @@ Import streams **exclusively** via the shared loader:
       get_rotating_mnist_stream,
       get_covtype_stream,
   )
+  
+Memory Pair Object Definition
+-----------
+import numpy as np
+try:
+    from .l_bfgs import LimitedMemoryBFGS
+except ImportError:
+    from l_bfgs import LimitedMemoryBFGS
+from typing import List
+import logging
+logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------------------
+class StreamNewtonMemoryPair:
+    """
+    Streaming ridge-regression learner / unlearner.
+
+    insert(x, y)  : one Newton step with Sherman–Morrison H⁻¹ update
+    delete(x, y)  : exact inverse-update removal + privacy noise
+
+    Parameters
+    ----------
+    dim            : feature dimension
+    lam            : ridge λ  (regulariser)
+    eps_total      : total ε budget for all deletions
+    delta_total    : total δ budget for all deletions
+    max_deletions  : anticipated upper bound on #delete() calls
+    """
+
+    # ---------------- initialisation ----------------
+    def __init__(
+        self,
+        dim: int,
+        lam: float = 1.0,
+        eps_total: float = 1.0,
+        delta_total: float = 1e-5,
+        max_deletions: int = 20,
+    ):
+        self.dim = dim
+        self.lam = lam
+
+        # Parameters and inverse Hessian
+        self.theta  = np.zeros(dim)
+
+        # L‑BFGS memory helper
+        self.lbfgs = LimitedMemoryBFGS(m_max=10)
+
+        # ---- privacy bookkeeping ----
+        self.K            = max_deletions
+        self.eps_total    = eps_total
+        self.delta_total  = delta_total
+        self.eps_step     = eps_total  / (2 * max_deletions)
+        self.delta_step   = delta_total / (2 * max_deletions)
+        self.eps_spent    = 0.0
+        self.deletions_so_far = 0
+
+    # ---------------- helpers ----------------
+    def _grad_point(self, x, y):
+        """
+        Gradient of the current loss ½(θᵀx − y)² wrt θ, evaluated at
+        current θ.
+        """
+        residual = self.theta @ x - y
+        return residual * x
+    
+    
+    def insert(self, x: np.ndarray, y: float):
+        g_old = self._grad_point(x, y)
+        logger.info("insert_called", extra={"residual": float(g_old.dot(g_old) ** 0.5)})
+
+        # ---------- safe Newton-like step ----------
+        d = self.lbfgs.direction(g_old)
+
+        # optional learning-rate to tame very first step
+        lr = 0.5  
+        theta_new = self.theta + lr * d
+
+        # ---------- curvature pair ----------
+        s = theta_new - self.theta
+        
+        # 1. UPDATE THETA FIRST
+        self.theta = theta_new
+
+        logger.info(
+            "model_step",
+            extra={
+                "step_norm": float(np.linalg.norm(s)),
+                "new_theta_norm": float(np.linalg.norm(self.theta)),
+            },
+        )
+        
+        # 2. NOW CALCULATE THE NEW GRADIENT WITH THE UPDATED THETA
+        g_new = self._grad_point(x, y)
+        y_vec = g_new - g_old
+
+        self.lbfgs.add_pair(s, y_vec)
+        # The self.theta = theta_new line is now removed from the end
+
+    # ---------------- unlearning ----------------
+    def delete(self, x: np.ndarray, y: float):
+        """
+        Remove the influence of observation (x, y).
+        No raw data are stored internally; caller must supply x, y.
+        """
+        logger.info("delete_called")
+
+        if self.deletions_so_far >= self.K:
+            raise RuntimeError("max_deletions budget exceeded")
+
+        # ─ ensure at least one curvature pair exists ───────
+        if len(self.lbfgs.S) == 0:
+            raise RuntimeError("No curvature pairs to use for unlearning")
+
+        g = self._grad_point(x, y)
+        d = self.lbfgs.direction(g)
+        self.theta -= d     # undo the influence (approximate)
+
+        # ── calibrated Gaussian noise for (ε,δ)-unlearning ─────────
+        sensitivity = np.linalg.norm(d, 2)
+        sigma = (
+            sensitivity
+            * np.sqrt(2 * np.log(1.25 / self.delta_step))
+            / self.eps_step
+        )
+        self.theta += np.random.normal(0.0, sigma, size=self.dim)
+        logger.info(
+            "delete_completed",
+            extra={"remaining_eps": self.eps_total - self.eps_spent},
+        )
+
+        # ── book-keeping ────────────────────────────────────────────
+        self.eps_spent        += self.eps_step
+        self.deletions_so_far += 1
+
+    # ---------------- utility ----------------
+    def privacy_ok(self):
+        """Return True iff cumulative ε ≤ ε_total."""
+        return self.eps_spent <= self.eps_total
 
 run.py
 ------
@@ -189,9 +320,6 @@ REQUIREMENTS
 4. **Reproducibility hooks**  
    Every loader takes a `seed` arg (default 42) and calls
    utils.set_global_seed(seed).
-
-5. **Do not touch other folders**  
-   Only write files inside  data_loader/.
 
 ─────────────────────────────────────────────────────────────────
 GIT
