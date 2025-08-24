@@ -1,0 +1,23 @@
+
+Regret Analysis Report
+======================
+
+Dataset: rotmnist_iid_sgd
+Analysis Time: 2025-07-16 19:32:45
+
+Results:
+--------
+Growth Exponent: 1.0431
+Final Regret: 268.29
+Final T: 100
+Ratio to √T: 26.8291
+
+Assessment:
+-----------
+Sublinear Growth: No
+√T-like Growth: No
+
+Interpretation:
+---------------
+✗ The algorithm does not achieve sublinear regret
+✗ The growth rate differs from √T scaling
